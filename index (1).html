@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bảng điều khiển cảnh báo cứu hộ</title>
+  <style>
+    :root { color-scheme: dark; font-family: 'Segoe UI', sans-serif; background: #121212; color: #fff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; }
+    button { font: inherit; cursor: pointer; border: 0; border-radius: 6px; padding: 8px 14px; color: #fff; background: #444; }
+    button:hover { filter: brightness(1.15); }
+    button:focus-visible { outline: 3px solid #90caf9; outline-offset: 3px; }
+    button:disabled { cursor: default; filter: none; }
+    .header, .actions, .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .header { padding-bottom: 18px; border-bottom: 1px solid #333; }
+    h1 { font-size: 24px; margin: 0; }
+    h2 { font-size: 16px; margin: 0; }
+    .status { padding: 8px 14px; border-radius: 20px; font-size: 14px; background: #c62828; }
+    .status.connected { background: #2e7d32; }
+    .status.pending { background: #795500; }
+    #toggle-btn { background: #e65100; }
+    #toggle-btn.paused { background: #1976d2; }
+    .telemetry { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 20px 0 8px; padding: 15px; border: 1px solid #333; border-radius: 10px; background: #1e1e1e; }
+    .telemetry b { color: #81c784; }
+    .telemetry b.warning { color: #ff8a80; }
+    .telemetry b.unknown { color: #bdbdbd; }
+    .note { font-size: 13px; color: #aaa; margin: 8px 0 18px; }
+    .container { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 20px; }
+    .panel { min-width: 0; background: #1e1e1e; border: 1px solid #333; border-radius: 10px; overflow: hidden; }
+    .panel-header { padding: 15px; background: #2d2d2d; border-bottom: 1px solid #333; }
+    .video-area { position: relative; aspect-ratio: 4 / 3; background: #000; display: grid; place-items: center; }
+    #live-video { width: 100%; height: 100%; object-fit: contain; }
+    #live-video[hidden] { display: none; }
+    #video-status { position: absolute; bottom: 12px; left: 12px; right: 12px; padding: 8px; border-radius: 5px; background: #000c; color: #ccc; font-size: 13px; pointer-events: none; }
+    .logs { padding: 15px; max-height: 65vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .empty { color: #aaa; text-align: center; }
+    .alert-card { --event-color: #ffca28; background: #3c1212; border-left: 5px solid var(--event-color); padding: 15px; border-radius: 5px; }
+    .alert-card h3 { margin: 0 0 8px; font-size: 15px; color: var(--event-color); }
+    .alert-card p { margin: 5px 0; font-size: 13px; color: #ddd; overflow-wrap: anywhere; }
+    .alert-card button { margin-top: 8px; background: #b52d00; font-size: 13px; }
+    .alert-card.acknowledged { background: #2a2a2a; border-color: #777; }
+    .alert-card.acknowledged h3 { color: #bbb; }
+    .alert-card.acknowledged button { background: #555; }
+    #clear-btn { font-size: 13px; }
+    @media (max-width: 800px) { body { padding: 12px; } .container { grid-template-columns: 1fr; } .actions { width: 100%; } .logs { max-height: 55vh; } }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <h1>Hệ thống cảnh báo</h1>
+    <div class="actions">
+      <button id="toggle-btn" type="button">⏸ Tạm dừng kết nối</button>
+      <span id="connection-status" class="status pending" role="status">Đang kết nối…</span>
+    </div>
+  </header>
+  <section class="telemetry" aria-label="Thông số thiết bị">
+    <span>🌡️ Nhiệt độ bộ xử lý: <b id="ui-temp">--</b> °C</span>
+    <span>🕒 Chênh lệch thời gian: <b id="ui-ping">--</b> ms</span>
+    <span>📏 Khoảng cách đến vật cản: <b id="ui-distance">--</b> cm</span>
+    <span>💨 Khí gas: <b id="ui-gas">--</b></span>
+  </section>
+  <p id="telemetry-status" class="note" role="status">Chưa nhận thông số thiết bị.</p>
+  <main class="container">
+    <section class="panel" aria-labelledby="video-title">
+      <div class="panel-header"><h2 id="video-title">📷 Hình ảnh trực tiếp – Máy quay 01</h2></div>
+      <div class="video-area">
+        <img id="live-video" alt="Hình ảnh trực tiếp từ Máy quay 01" hidden>
+        <span id="video-status" role="status">Đang chờ hình ảnh…</span>
+      </div>
+    </section>
+    <section class="panel" aria-labelledby="logs-title">
+      <div class="panel-header">
+        <h2 id="logs-title">Lịch sử cảnh báo</h2>
+        <button id="clear-btn" type="button">🗑 Xóa lịch sử</button>
+      </div>
+      <div id="alert-logs" class="logs"></div>
+      <p class="note" style="padding: 0 15px">Giữ tối đa 200 cảnh báo gần nhất trong phiên này. Xác nhận chỉ ghi nhận trên màn hình này.</p>
+    </section>
+  </main>
+  <script>
+    'use strict';
+    // Đổi hai URL dưới đây khi địa chỉ Raspberry Pi thay đổi.
+    // Nếu phục vụ trang qua HTTPS, cấu hình backend/proxy HTTPS và WSS tương ứng.
+    const CONFIG = Object.freeze({
+      websocketUrl: 'ws://172.20.10.4:8000/ws',
+      videoUrl: 'http://172.20.10.4:5000/video_feed',
+      maxAlerts: 200,
+      staleAfterMs: 10000,
+      connectTimeoutMs: 10000,
+      maxRetryMs: 30000
+    });
+    const $ = id => document.getElementById(id);
+    const ui = {
+      video: $('live-video'), videoStatus: $('video-status'), status: $('connection-status'),
+      toggle: $('toggle-btn'), logs: $('alert-logs'), telemetryStatus: $('telemetry-status'),
+      temp: $('ui-temp'), ping: $('ui-ping'),
+      distance: $('ui-distance'), gas: $('ui-gas')
+    };
+    const EVENTS = new Map([
+      ['FIRE', { title: 'PHÁT HIỆN ĐÁM CHÁY', icon: '🔥', color: '#ff8a65' }],
+      ['SMOKE', { title: 'PHÁT HIỆN KHÓI', icon: '💨', color: '#ffb74d' }],
+      ['FALLEN_PERSON', { title: 'PHÁT HIỆN NGƯỜI NGÃ', icon: '🚑', color: '#f48fb1' }],
+      ['PERSON', { title: 'PHÁT HIỆN NGƯỜI', icon: '👤', color: '#90caf9' }]
+    ]);
+    const SOURCES = new Map([
+      ['AI', 'Trí tuệ nhân tạo'], ['AI ONLY', 'Trí tuệ nhân tạo'],
+      ['SENSOR', 'Cảm biến'], ['SENSOR ONLY', 'Cảm biến'],
+      ['AI + SENSOR', 'Trí tuệ nhân tạo và cảm biến']
+    ]);
+    const SAFE_GAS = new Set(['SAFE', 'NORMAL', 'AN TOÀN']);
+    const DANGER_GAS = new Set(['ALARM', 'WARNING', 'DANGER', 'CẢNH BÁO RÒ RỈ']);
+    const timeFormat = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'medium' });
+    let active = true;
+    let socket = null;
+    let reconnectTimer = null;
+    let connectTimer = null;
+    let videoTimer = null;
+    let retryCount = 0;
+    let lastTelemetryAt = 0;
+    const normalize = value => typeof value === 'string' ? value.trim().toUpperCase() : '';
+    const numeric = value => {
+      if (typeof value !== 'number' && typeof value !== 'string') return null;
+      if (typeof value === 'string' && !value.trim()) return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    };
+    function setStatus(message, state = '') {
+      ui.status.textContent = message;
+      ui.status.className = `status ${state}`;
+    }
+    function setValue(element, value, state = '') {
+      element.textContent = value;
+      element.className = state;
+    }
+    function resetTelemetry(message) {
+      for (const key of ['temp', 'ping', 'distance', 'gas']) setValue(ui[key], '--', 'unknown');
+      lastTelemetryAt = 0;
+      ui.telemetryStatus.textContent = message;
+    }
+    function renderTelemetry(data) {
+      lastTelemetryAt = Date.now();
+      const temp = numeric(data.cpu_temp);
+      const distance = numeric(data.distance);
+      const timestamp = numeric(data.timestamp);
+      const age = timestamp === null ? null : Math.abs(Date.now() - timestamp * 1000);
+      const braking = data.auto_brake === true || data.auto_brake === 1;
+      setValue(ui.temp, temp === null ? '--' : temp.toFixed(1), temp === null ? 'unknown' : '');
+      setValue(ui.ping, age === null ? '--' : age.toFixed(0), age === null ? 'unknown' : '');
+      setValue(ui.distance, distance === null || distance < 0 ? '--' : `${distance}${braking ? ' (PHANH GẤP)' : ''}`, braking ? 'warning' : distance === null || distance < 0 ? 'unknown' : '');
+      const gas = normalize(data.gas_status);
+      setValue(ui.gas, DANGER_GAS.has(gas) ? 'CẢNH BÁO RÒ RỈ' : SAFE_GAS.has(gas) ? 'An toàn' : 'Chưa xác định', DANGER_GAS.has(gas) ? 'warning' : SAFE_GAS.has(gas) ? '' : 'unknown');
+      ui.telemetryStatus.textContent = 'Đang cập nhật. Chênh lệch thời gian phụ thuộc đồng hồ của thiết bị và máy xem.';
+    }
+    function clearLogs() {
+      const empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = 'Chưa có cảnh báo trong danh sách.';
+      ui.logs.replaceChildren(empty);
+    }
+    function addAlert(data) {
+      const eventInfo = EVENTS.get(normalize(data.event_type)) || { title: 'CẢNH BÁO KHÔNG XÁC ĐỊNH', icon: '⚠️', color: '#ffca28' };
+      const card = document.createElement('article');
+      card.className = 'alert-card';
+      card.style.setProperty('--event-color', eventInfo.color);
+      const title = document.createElement('h3');
+      title.textContent = `${eventInfo.icon} ${eventInfo.title}`;
+      card.append(title);
+      const device = typeof data.device_id === 'string' ? data.device_id.slice(0, 200) : 'Chưa xác định';
+      const match = /^camera_(\d+)$/i.exec(device);
+      const confidence = numeric(data.confidence);
+      const timestamp = numeric(data.timestamp);
+      const date = new Date(timestamp === null ? NaN : timestamp * 1000);
+      const fields = [
+        ['Thiết bị', match ? `Máy quay ${match[1]}` : device],
+        ['Nguồn phát hiện', SOURCES.get(normalize(data.source)) || 'Chưa xác định'],
+        ['Độ tin cậy', confidence !== null && confidence >= 0 && confidence <= 1 ? `${(confidence * 100).toFixed(2)}%` : 'Chưa xác định'],
+        ['Thời gian', Number.isFinite(date.getTime()) ? timeFormat.format(date) : 'Chưa xác định']
+      ];
+      for (const [label, value] of fields) {
+        const row = document.createElement('p');
+        const labelNode = document.createElement('strong');
+        labelNode.textContent = `${label}: `;
+        row.append(labelNode, document.createTextNode(value));
+        card.append(row);
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.action = 'acknowledge';
+      button.textContent = 'Xác nhận cảnh báo';
+      card.append(button);
+      ui.logs.querySelector('.empty')?.remove();
+      ui.logs.prepend(card);
+      while (ui.logs.childElementCount > CONFIG.maxAlerts) ui.logs.lastElementChild.remove();
+    }
+    function handleMessage(event) {
+      let data;
+      try { data = JSON.parse(event.data); } catch { return; }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+      if (normalize(data.type) === 'TELEMETRY') renderTelemetry(data);
+      // Chấp nhận cảnh báo cũ có event_type nhưng không có type.
+      else if (typeof data.event_type === 'string' && data.event_type.trim()) addAlert(data);
+    }
+    function scheduleReconnect() {
+      if (!active || reconnectTimer !== null) return;
+      const delay = Math.min(1000 * 2 ** Math.min(retryCount++, 5), CONFIG.maxRetryMs);
+      setStatus(`Mất kết nối. Thử lại sau ${delay / 1000} giây…`, 'pending');
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, delay);
+    }
+    function connect() {
+      if (!active || socket) return;
+      setStatus('Đang kết nối…', 'pending');
+      let current;
+      try { current = new WebSocket(CONFIG.websocketUrl); } catch { scheduleReconnect(); return; }
+      socket = current;
+      connectTimer = setTimeout(() => {
+        if (socket !== current) return;
+        disconnectSocket();
+        resetTelemetry('Chưa kết nối được với thiết bị.');
+        scheduleReconnect();
+      }, CONFIG.connectTimeoutMs);
+      current.onopen = () => {
+        if (socket !== current || !active) return;
+        clearTimeout(connectTimer);
+        connectTimer = null;
+        retryCount = 0;
+        setStatus('🟢 Đã kết nối với máy chủ', 'connected');
+      };
+      current.onmessage = event => { if (socket === current && active) handleMessage(event); };
+      current.onerror = () => {
+        if (socket !== current) return;
+        disconnectSocket();
+        resetTelemetry('Mất kết nối. Chưa có dữ liệu mới.');
+        scheduleReconnect();
+      };
+      current.onclose = () => {
+        if (socket !== current) return;
+        socket = null;
+        clearTimeout(connectTimer);
+        connectTimer = null;
+        resetTelemetry('Mất kết nối. Chưa có dữ liệu mới.');
+        scheduleReconnect();
+      };
+    }
+    function disconnectSocket() {
+      clearTimeout(connectTimer);
+      connectTimer = null;
+      const previous = socket;
+      socket = null;
+      if (previous) {
+        previous.onopen = previous.onmessage = previous.onerror = previous.onclose = null;
+        previous.close();
+      }
+    }
+    function startVideo() {
+      if (!active) return;
+      clearTimeout(videoTimer);
+      videoTimer = null;
+      ui.videoStatus.textContent = 'Đang tải hình ảnh…';
+      ui.video.hidden = false;
+      const url = new URL(CONFIG.videoUrl);
+      url.searchParams.set('t', Date.now());
+      ui.video.src = url.href;
+    }
+    ui.video.addEventListener('load', () => {
+      if (active && ui.video.hasAttribute('src')) ui.videoStatus.textContent = 'Luồng hình ảnh đã tải; trạng thái kết nối máy chủ hiển thị phía trên.';
+    });
+    ui.video.addEventListener('error', () => {
+      if (!active) return;
+      ui.video.hidden = true;
+      ui.videoStatus.textContent = 'Không tải được hình ảnh. Đang thử lại…';
+      clearTimeout(videoTimer);
+      videoTimer = setTimeout(startVideo, 5000);
+    });
+    function stopConnections() {
+      clearTimeout(reconnectTimer);
+      clearTimeout(videoTimer);
+      reconnectTimer = videoTimer = null;
+      disconnectSocket();
+      ui.video.removeAttribute('src');
+      ui.video.hidden = true;
+    }
+    ui.toggle.addEventListener('click', () => {
+      active = !active;
+      ui.toggle.classList.toggle('paused', !active);
+      ui.toggle.textContent = active ? '⏸ Tạm dừng kết nối' : '▶ Bật kết nối hệ thống';
+      if (active) {
+        retryCount = 0;
+        resetTelemetry('Đang chờ thông số thiết bị…');
+        connect();
+        startVideo();
+      } else {
+        stopConnections();
+        setStatus('Đã tạm dừng kết nối', 'pending');
+        ui.videoStatus.textContent = 'Đã tạm dừng hình ảnh.';
+        resetTelemetry('Đã tạm dừng cập nhật.');
+      }
+    });
+    $('clear-btn').addEventListener('click', clearLogs);
+    ui.logs.addEventListener('click', event => {
+      const button = event.target.closest('button[data-action="acknowledge"]');
+      if (!button || !ui.logs.contains(button) || button.disabled) return;
+      button.closest('.alert-card').classList.add('acknowledged');
+      button.textContent = 'Đã xác nhận cảnh báo';
+      button.disabled = true;
+    });
+    const freshnessTimer = setInterval(() => {
+      if (active && lastTelemetryAt && Date.now() - lastTelemetryAt > CONFIG.staleAfterMs) resetTelemetry('Thông số đã hết cập nhật. Đang chờ dữ liệu mới…');
+    }, 1000);
+    window.addEventListener('pagehide', () => { active = false; stopConnections(); });
+    window.addEventListener('pageshow', event => {
+      if (event.persisted && !ui.toggle.classList.contains('paused')) { active = true; connect(); startVideo(); }
+    });
+    clearLogs();
+    resetTelemetry('Đang chờ thông số thiết bị…');
+    connect();
+    startVideo();
+  </script>
+</body>
+</html>
