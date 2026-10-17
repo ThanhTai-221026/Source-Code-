@@ -4,9 +4,8 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 
-// ========================================================
+
 // WIFI / MQTT
-// ========================================================
 const char* ssid_car     = "Tuiineee";
 const char* password_car = "9876543210";
 const char* mqtt_server  = "broker.hivemq.com";
@@ -20,9 +19,7 @@ const char* TOPIC_STATUS    = "robot/status";
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-// ========================================================
 // ESP32-S3 PINOUT - MOTOR
-// ========================================================
 // L298N #1 - 2 BÁNH TRÁI
 const int ENA_FL = 4;
 const int IN1_FL = 5;
@@ -84,7 +81,6 @@ const uint8_t CH_ELBOW    = 2;
 const uint8_t CH_GRIPPER  = 3;
 
 // PCA9685 12-bit, 50 Hz = chu kỳ 20 ms.
-// Giữ trong vùng an toàn ban đầu để tránh đẩy servo vào cơ khí ở biên.
 const int SERVO_MIN_US = 500;
 const int SERVO_MAX_US = 2400;
 const int SERVO_CENTER = 90;
@@ -129,7 +125,7 @@ double rampRPM_RR = 0;
 
 float currentSpeedKmh = 0.0f;
 
-// PID đang giữ giống hệ thống cũ, chỉ bổ sung reset rõ ràng khi STOP.
+// PID 
 const double Kp = 0.80;
 const double Ki = 0.20;
 const double Kd = 0.01;
@@ -146,15 +142,13 @@ unsigned long lastTelemetryTime = 0;
 unsigned long lastStatusTime = 0;
 const int controlInterval = 30;
 
-// ========================================================
 // ENCODER ISR
-// ========================================================
+
 void IRAM_ATTR isr_FL() { ticks_FL++; }
 void IRAM_ATTR isr_FR() { ticks_FR++; }
 void IRAM_ATTR isr_RL() { ticks_RL++; }
 void IRAM_ATTR isr_RR() { ticks_RR++; }
 
-// Echo capture does not block MQTT, motor PID, or servo controls.
 void IRAM_ATTR rearEchoISR() {
   const bool high = digitalRead(REAR_ECHO_PIN);
   const unsigned long now = micros();
@@ -178,10 +172,6 @@ bool rearBlocked() {
          && rearDistanceCm >= 0.0f && rearDistanceCm < REAR_STOP_CM;
 }
 
-// ========================================================
-// ========================================================
-// SERVO HELPERS
-// ========================================================
 int angleToPulse(int angle) {
   angle = constrain(angle, 0, 180);
 
@@ -272,9 +262,6 @@ void printServoState() {
                 pcaReady ? "OK" : "LOI");
 }
 
-// ========================================================
-// MOTOR HELPERS
-// ========================================================
 void resetPID() {
   integral_FL = integral_FR = integral_RL = integral_RR = 0;
   lastError_FL = lastError_FR = lastError_RL = lastError_RR = 0;
@@ -445,7 +432,7 @@ void processMotion(int x, int y) {
 }
 
 // ========================================================
-// SERVO MQTT COMMAND
+// SERVO MQTT 
 // ========================================================
 void processServoCommand(String msg) {
   msg.trim();
@@ -487,7 +474,7 @@ void processServoCommand(String msg) {
 }
 
 // ========================================================
-// MQTT CALLBACK
+// MQTT Callback
 // ========================================================
 void callback(char* topic, byte* payload, unsigned int length) {
   String message;
@@ -514,7 +501,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 }
 
 // ========================================================
-// MQTT / WIFI
+// MQTT/WIFI
 // ========================================================
 void publishStatus() {
   if (!client.connected()) return;
@@ -565,9 +552,6 @@ void ensureWiFi() {
   WiFi.begin(ssid_car, password_car);
 }
 
-// ========================================================
-// PID / RAMP
-// ========================================================
 int computePID(double target, double current, double &integral, double &lastError) {
   if (target <= 2.0) {
     integral = 0;
@@ -598,9 +582,7 @@ double approachSmooth(double target, double current, double step) {
   return target;
 }
 
-// ========================================================
-// SETUP
-// ========================================================
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -697,12 +679,8 @@ void setup() {
   Serial.println("Neu servo khong gong: xem I2C scan va nguon V+ PCA9685.");
 }
 
-// ========================================================
-// LOOP
-// ========================================================
 void loop() {
   updateRearSensor();
-  // Stop reverse before entering potentially blocking network reconnect calls.
   if (reversing && (WiFi.status() != WL_CONNECTED || !client.connected())) {
     stopMotors();
   }
