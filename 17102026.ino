@@ -41,7 +41,7 @@ const int IN8_RR = 11;
 
 const int REAR_TRIG_PIN = 1;
 const int REAR_ECHO_PIN = 2;
-const float REAR_STOP_CM = 15.0f;
+const float REAR_STOP_CM = 20.0f;
 const unsigned long REAR_SAMPLE_MS = 70;
 const unsigned long REAR_TIMEOUT_US = 30000;
 const unsigned long REAR_STALE_MS = 250;
